@@ -274,7 +274,7 @@ with tab_upload:
     )
     f_upload = st.file_uploader("Pilih / foto kemasan mie", type=["jpg", "jpeg", "png"])
 with tab_kamera:
-    st.caption("Kamera bawaan browser: resolusi lebih rendah dan fokus tidak bisa diatur. Untuk hasil OCR terbaik pakai tab sebelah.")
+    st.caption("Kamera bawaan browser: resolusi lebih rendah dan fokus tidak bisa diatur. Untuk hasil OCR terbaik pakai upload gambar.")
     f_kamera = st.camera_input("Foto bagian tabel informasi nilai gizi")
 
 berkas = f_upload or f_kamera
