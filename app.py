@@ -3,6 +3,7 @@ GUI Deteksi Kandungan Gizi Mie (YOLOv8n + EasyOCR)
 Jalankan dengan:  streamlit run app.py
 """
 import hashlib
+import io
 import os
 import re
 
@@ -225,9 +226,12 @@ def muat_ocr():
     return easyocr.Reader(["id", "en"], gpu=torch.cuda.is_available())
 
 
-def baca_gambar(file_bytes):
-    """Bytes -> array BGR. exif_transpose supaya foto HP tidak miring."""
-    pil = ImageOps.exif_transpose(Image.open(__import__("io").BytesIO(file_bytes))).convert("RGB")
+def baca_gambar(file_bytes, max_sisi=1600):
+    """Bytes -> array BGR. exif_transpose supaya foto HP tidak miring.
+    Foto yang terlalu besar diperkecil supaya OCR di server (CPU) tidak lambat."""
+    pil = ImageOps.exif_transpose(Image.open(io.BytesIO(file_bytes))).convert("RGB")
+    if max_sisi and max(pil.size) > max_sisi:
+        pil.thumbnail((max_sisi, max_sisi), Image.LANCZOS)
     return cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
 
 
@@ -243,6 +247,9 @@ with st.sidebar:
     path_model = st.text_input("Lokasi file model (.pt)", value="best.pt")
     conf = st.slider("Confidence YOLO", 0.1, 0.95, 0.5, 0.05,
                      help="Makin tinggi = makin ketat, kotak salah berkurang tapi tabel yang samar bisa terlewat.")
+    max_sisi = st.select_slider(
+        "Ukuran maks. gambar (px)", options=[800, 1200, 1600, 2400, 4000], value=1600,
+        help="Foto HP biasanya sangat besar. Diperkecil biar proses lebih cepat. Kalau angka sering salah baca, coba naikkan.")
     st.divider()
     st.markdown(
         "**Aturan status**\n"
@@ -258,10 +265,16 @@ if not os.path.exists(path_model):
 model = muat_yolo(path_model)
 reader = muat_ocr()
 
-tab_upload, tab_kamera = st.tabs(["📁 Upload gambar", "📷 Ambil foto"])
+tab_upload, tab_kamera = st.tabs(["📱 Foto / Upload (disarankan)", "📷 Kamera browser"])
 with tab_upload:
-    f_upload = st.file_uploader("Pilih foto kemasan mie", type=["jpg", "jpeg", "png"])
+    st.caption(
+        "💡 **Di HP:** tekan tombol di bawah lalu pilih **Kamera / Take Photo**. "
+        "Yang terbuka adalah kamera bawaan HP (bisa tap untuk fokus, zoom, flash, resolusi penuh). "
+        "Di laptop: pilih file foto seperti biasa."
+    )
+    f_upload = st.file_uploader("Pilih / foto kemasan mie", type=["jpg", "jpeg", "png"])
 with tab_kamera:
+    st.caption("Kamera bawaan browser: resolusi lebih rendah dan fokus tidak bisa diatur. Untuk hasil OCR terbaik pakai tab sebelah.")
     f_kamera = st.camera_input("Foto bagian tabel informasi nilai gizi")
 
 berkas = f_upload or f_kamera
@@ -273,10 +286,10 @@ data = berkas.getvalue()
 id_gambar = hashlib.md5(data).hexdigest()[:10]
 
 # Cache hasil per gambar + conf, karena Streamlit menjalankan ulang script tiap ada input berubah
-kunci_cache = f"hasil_{id_gambar}_{conf}"
+kunci_cache = f"hasil_{id_gambar}_{conf}_{max_sisi}"
 if kunci_cache not in st.session_state:
     with st.spinner("Mendeteksi tabel dan membaca teks..."):
-        img_bgr = baca_gambar(data)
+        img_bgr = baca_gambar(data, max_sisi)
         st.session_state[kunci_cache] = proses_gambar(img_bgr, model, reader, conf)
 nilai, detail, gambar_box = st.session_state[kunci_cache]
 
@@ -297,11 +310,11 @@ with kol_kanan:
     st.caption("OCR kadang salah baca. Cocokkan dengan foto, ubah kalau perlu, hasil di bawah otomatis menyesuaikan.")
 
     takaran = st.number_input("Takaran saji (g)", min_value=0.0, value=nilai["Takaran Saji"],
-                              step=1.0, key=f"tak_{id_gambar}_{conf}", placeholder="tidak terbaca")
+                              step=1.0, key=f"tak_{id_gambar}_{conf}_{max_sisi}", placeholder="tidak terbaca")
     lemak = st.number_input("Lemak jenuh per saji (g)", min_value=0.0, value=nilai["Lemak Jenuh"],
-                            step=0.5, key=f"lem_{id_gambar}_{conf}", placeholder="tidak terbaca")
+                            step=0.5, key=f"lem_{id_gambar}_{conf}_{max_sisi}", placeholder="tidak terbaca")
     natrium = st.number_input("Natrium per saji (mg)", min_value=0.0, value=nilai["Natrium"],
-                              step=10.0, key=f"nat_{id_gambar}_{conf}", placeholder="tidak terbaca")
+                              step=10.0, key=f"nat_{id_gambar}_{conf}_{max_sisi}", placeholder="tidak terbaca")
 
     st.subheader("3. Hasil analisis")
     per100_lemak, klaim_lemak = hitung_klaim("Lemak Jenuh", lemak, takaran)
